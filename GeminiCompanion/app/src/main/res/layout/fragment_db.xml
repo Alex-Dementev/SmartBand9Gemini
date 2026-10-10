@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.appcompat.widget.LinearLayoutCompat xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="20dp"
+    tools:context=".ui.DatabaseFragment">
+
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="35dp"
+        android:gravity="center"
+        android:textSize="25dp"
+        android:textColor="@color/white"
+        android:layout_marginTop="-5dp"
+        android:text="История"></TextView>
+
+    <!-- Первый ScrollView (60% высоты) -->
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="30"
+        android:layout_marginTop="5dp"
+        android:background="@color/black"
+        android:layout_marginBottom="8dp">
+
+        <TextView
+            android:id="@+id/AllHistory"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textSize="13sp" />
+    </ScrollView>
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="30dp"
+        android:gravity="center"
+        android:textSize="25dp"
+        android:layout_marginBottom="8dp"
+        android:textColor="@color/white"
+        android:text="Система"></TextView>
+
+    <!-- Второй ScrollView (35% высоты) -->
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="30"
+        android:background="@color/black"
+        android:layout_marginBottom="65dp"
+        android:layout_marginTop="1dp">
+
+        <TextView
+            android:id="@+id/AllTrablesHistory"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textSize="13sp" />
+    </ScrollView>
+
+</androidx.appcompat.widget.LinearLayoutCompat>

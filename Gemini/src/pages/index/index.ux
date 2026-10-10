@@ -1,0 +1,1095 @@
+<template>
+  <div class="container">
+    <!-- Верхний заголовок -->
+    <div class="header">
+      <text class="status-title">{{ statusText }}</text>
+    </div>
+
+    <!-- Поле ответа с возможностью скролла -->
+    <scroll if="{{ !isKeyboardOpen }}" class="response-scroll" scroll-y="true">
+      <!-- ДОБАВИТЬ style с высотой -->
+      <div class="response-box" style="height: {{ responseBoxHeight }}px;">
+        <text class="response-text">{{ responseText }}</text>
+      </div>
+    </scroll>
+
+    <!-- Поле набранного текста (когда клавиатура открыта) -->
+    <div if="{{ isKeyboardOpen }}" class="preview-box">
+      <text class="preview-text">{{ formattedInputText }}</text>
+    </div>
+
+    <!-- Кнопки управления (когда клавиатура закрыта) -->
+    <div if="{{ !isKeyboardOpen }}" class="actions-container">
+      <text if="{{ !isLoading }}" class="ask-btn" onclick="openKeyboard">Ответить</text>
+      <text if="{{ isLoading }}" class="ask-btn disabled-btn">Занято...</text>
+      <!-- Кнопка выхода -->
+      <text class="exit-btn" onclick="exitApp">Выход</text>
+    </div>
+
+    <!-- Клавиатура -->
+    <div if="{{ isKeyboardOpen }}" class="keyboard-container">
+      
+      <!-- 1. Верхняя панель (Закрыть / Отправить) -->
+      <div class="top-bar">
+        <text class="bar-btn close-btn" onclick="closeKeyboard">Закрыть</text>
+        <text class="bar-btn {{ isSendDisabled ? 'send-btn-disabled' : 'send-btn' }}" onclick="handleSend">Отправить</text>
+      </div>
+
+      <!-- 2. Панель управления -->
+      <div class="control-row">
+        <text class="ctrl-btn space-btn" onclick="addSpace">Пробел</text>
+        <text class="ctrl-btn del-btn" onclick="deleteChar">←</text>
+      </div>
+
+      <!-- ПАНЕЛЬ ПОДСКАЗОК -->
+      <div class="suggestion-row1" onclick="applySuggestion1">
+        <text class="suggestion-btn1">{{ currentSuggestion1 }}</text>
+      </div>
+      <div class="suggestion-row2" onclick="applySuggestion2">
+        <text class="suggestion-btn2">{{ currentSuggestion2 }}</text>
+      </div>
+
+      <!-- 3. Скролл для клавиш (ЗДЕСЬ МЕНЯЕМ ИМЕНА МЕТОДОВ СВАЙПА) -->
+      <scroll class="keyboard-scroll" scroll-y="true" ontouchstart="handleKeyboardTouchStart" ontouchend="handleKeyboardTouchEnd">
+        <div class="keys-layout">
+          <div class="column col-side">
+            <text 
+              for="{{ char in currentLayout.left }}" 
+              class="key-btn" 
+              onclick="addChar(char)"
+            >{{ char }}</text>
+          </div>
+
+          <div class="column col-center">
+            <text 
+              for="{{ char in currentLayout.center }}" 
+              class="key-btn key-btn-center" 
+              onclick="addChar(char)"
+            >{{ char }}</text>
+          </div>
+
+          <div class="column col-side">
+            <text 
+              for="{{ char in currentLayout.right }}" 
+              class="key-btn" 
+              onclick="addChar(char)"
+            >{{ char }}</text>
+          </div>
+        </div>
+      </scroll>
+    </div> <!-- Закрывающая тега keyboard-container -->
+
+
+    <!-- Отдельная панель галереи -->
+    <div if="{{ isGalleryOpen }}" class="gallery-container">
+      <!-- Кнопка выхода -->
+      <text class="gallery-exit-btn" onclick="closeGallery">Выйти</text>
+      
+      <!-- ВТОРАЯ КНОПКА: Сброс и запрос новых фото (без автоматического запроса при входе) -->
+      <text if="{{ !isGalleryLoading }}" class="gallery-refresh-btn" onclick="clearAndRequestGallery">Сбросить фото</text>
+      <text if="{{ isGalleryLoading }}" class="gallery-refresh-btn gallery-btn-disabled">Загрузка...</text>
+
+      <scroll class="gallery-scroll" scroll-y="true">
+        <div class="squares-list">
+          <div for="{{ (index, item) in galleryItems }}" class="gray-square {{ item.selected ? 'square-selected' : 'square-unselected' }}" onclick="toggleSelectImage(item)">
+            <image if="{{ item.filePath }}" src="{{ item.filePath }}" class="square-img" onerror="onImageError" />
+            <text if="{{ !item.filePath }}" class="square-text">{{ item.name || (index + 1) }}</text>
+          </div>
+        </div>
+      </scroll>
+    </div>
+  </div>
+</template>
+
+<script>
+  import interconnect from '@system.interconnect'
+  import prompt from '@system.prompt'
+  import file from '@system.file'
+
+  let connect = null
+
+  export default {
+    data: {
+      statusText: 'Отключено',
+      responseText: 'Здесь будет текст ответа.',
+      isGalleryOpen: false,
+      isGalleryLoading: false,
+      galleryItems: [],
+      touchStartY: 0,
+      currentSuggestion1: '',
+      currentSuggestion2: '',
+      inputText: '',
+      responseBoxHeight: 367,
+      isKeyboardOpen: false,
+      isLoading: false,
+      layoutIndex: 0,
+      touchStartX: 0,
+      layouts: [
+        {
+          left: ['-', 'я', 'ч', 'с', 'м', 'и', 'т', 'ь', 'б', 'ю', '!', '?'],
+          center: ['ф', 'ы', 'в', 'а', 'п', 'р', 'о', 'л', 'д', 'ж', 'э', '.'],
+          right: ['й', 'ц', 'у', 'к', 'е', 'н', 'г', 'ш', 'щ', 'з', 'х', ',']
+        },
+        {
+          left: ['!', 'z', 'x', 'c', 'v', 'b', 'n', 'm', '?', ','],
+          center: ['a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', '.'],
+          right: ['q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p']
+        },
+        {
+          left: ['1', '4', '7', '0', '*', '(', '[', '<', '{'],
+          center: ['2', '5', '8', '+', ',', ')', ']', '>', '}'],
+          right: ['3', '6', '9', '-', '^', '/', '%', '=']
+        }
+      ]
+    },
+
+    computed: {
+      isSendDisabled() {
+        const hasText = this.inputText && this.inputText.trim().length > 0;
+        const hasSelectedImage = this.galleryItems && this.galleryItems.some(i => i && i.selected);
+        
+        // Кнопка неактивна, если нет текста И нет выбранных фото, ИЛИ идет загрузка/нет соединения
+        return (!hasText && !hasSelectedImage) || this.isLoading || !connect;
+      },
+      currentLayout() {
+        return this.layouts[this.layoutIndex];
+      },
+      formattedInputText() {
+        if (!this.inputText || this.inputText.length === 0) {
+          return 'Наберите текст...';
+        }
+        const maxChars = 18;
+        if (this.inputText.length > maxChars) {
+          return '...' + this.inputText.slice(-maxChars);
+        }
+        return this.inputText;
+      }
+    },
+
+    onInit() {
+      // При запуске приложения полностью чистим старые фото с диска
+      this.clearSavedPhotos();
+      this.initInterconnect();
+    },
+
+    // Метод для полной очистки сохраненных файлов из internal://cache/
+    clearSavedPhotos() {
+      this.galleryItems.forEach(item => {
+        if (item.filePath) {
+          file.delete({
+            uri: item.filePath,
+            success: () => {
+              console.log('Файл удален: ' + item.filePath);
+            }
+          });
+        }
+      });
+      this.galleryItems = [];
+    },
+
+    onBackPress() {
+      return true;
+    },
+
+    exitApp() {
+      
+      try {
+        const app = require('@system.app');
+        app.terminate();
+      } catch (e) {
+        try {
+          const router = require('@system.router');
+          router.back();
+        } catch (err) {}
+      }
+    },
+
+    initInterconnect() {
+      try {
+        connect = interconnect.instance();
+
+        connect.onopen = (data) => {
+          this.statusText = 'Подключение...';
+          this.isLoading = true;
+          
+          setTimeout(() => {
+            this.requestLastResponse();
+          }, 200);
+        };
+
+        connect.onclose = (data) => {
+          const code = data && data.code ? data.code : 'неизвестно';
+          const reason = data && data.data ? data.data : 'нет данных';
+          this.statusText = 'Отключено';
+          this.responseText = `Канал закрыт. Код: ${code}. Причина: ${reason}`;
+          this.updateResponseHeight();
+        };
+
+        connect.onerror = (data) => {
+          const code = data && data.code ? data.code : '1000';
+          const errMessage = data && data.data ? data.data : 'Неизвестная ошибка';
+          this.statusText = 'Ошибка';
+          this.isLoading = false;
+          this.responseText = `Ошибка связи! Код: [${code}]. Текст: ${errMessage}`;
+          this.updateResponseHeight();
+        };
+
+        connect.onmessage = (res) => {
+          try {
+            const rawData = res && res.data ? res.data : res;
+            const payload = typeof rawData === 'string' ? JSON.parse(rawData) : rawData;
+            
+
+            if (payload.text.indexOf('{suggestion}') === 0) {
+              var restText = payload.text.substring(12); // Длина '{suggestion}' равна 12
+              var match = restText.match(/^\{([^}]+)\}(.*)$/);
+
+              if (match) {
+                var oldPhrase = match[1];
+                var wordsString = match[2];
+
+                // Сравниваем старую фразу с текущим вводом
+                if (oldPhrase === this.inputText) {
+                  var suggestions = wordsString.split(',');
+                  this.currentSuggestion1 = suggestions[0] ? suggestions[0].trim() : '';
+                  this.currentSuggestion2 = suggestions[1] ? suggestions[1].trim() : '';
+                }
+              }
+              return;
+            }
+
+            if (payload && payload.text && payload.text.startsWith('GET_GALLERY:')) {
+              const body = payload.text.substring('GET_GALLERY:'.length).trim();
+              
+              if (!body) {
+                this.statusText = `Всего: ${this.galleryItems.length}`;
+                this.responseText = `[DEBUG] Телефон ответил: больше фото нет.`;
+                this.updateResponseHeight();
+                this.isGalleryLoading = false;
+                return;
+              }
+
+              const sepIdx = body.indexOf(';');
+              if (sepIdx === -1) {
+                this.responseText = `[DEBUG ERROR] Нет разделителя ';' в ответе: ${body.substring(0, 30)}`;
+                this.updateResponseHeight();
+                return;
+              }
+
+              const imageName = body.substring(0, sepIdx).trim();
+              const imageBase64 = body.substring(sepIdx + 1).trim();
+
+              if (imageName && imageBase64) {
+                let cleanBase64 = imageBase64.replace(/^data:image\/\w+;base64,/, '');
+                cleanBase64 = cleanBase64.replace(/[\r\n\s]/g, '');
+
+                const localUri = `internal://cache/${imageName}`;
+
+                // Декодируем Base64 в байты
+                const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+                const bytes = new Uint8Array(Math.floor(cleanBase64.length * 0.75));
+                let p = 0;
+                for (let i = 0; i < cleanBase64.length; i += 4) {
+                  const n = (chars.indexOf(cleanBase64[i]) << 18) |
+                            (chars.indexOf(cleanBase64[i + 1]) << 12) |
+                            ((chars.indexOf(cleanBase64[i + 2]) & 63) << 6) |
+                            (chars.indexOf(cleanBase64[i + 3]) & 63);
+                  bytes[p++] = (n >> 16) & 255;
+                  if (cleanBase64[i + 2] !== '=') bytes[p++] = (n >> 8) & 255;
+                  if (cleanBase64[i + 3] !== '=') bytes[p++] = n & 255;
+                }
+
+                const finalBuffer = bytes.subarray(0, p);
+
+                // Пишем файл
+                file.writeArrayBuffer({
+                  uri: localUri,
+                  buffer: finalBuffer,
+                  success: () => {
+                    const existingIndex = this.galleryItems.findIndex(i => i.name === imageName);
+                    const isSelected = existingIndex !== -1 ? !!this.galleryItems[existingIndex].selected : false;
+                    const itemData = { name: imageName, filePath: localUri, selected: isSelected };
+
+                    if (existingIndex !== -1) {
+                      this.galleryItems[existingIndex] = itemData;
+                    } else {
+                      this.galleryItems.push(itemData);
+                    }
+
+                    setTimeout(() => {
+                      this.galleryItems = [...this.galleryItems];
+                      this.statusText = `(${this.galleryItems.length}/10)`;
+
+                      if (this.galleryItems.length < 10)
+                        this.requestGalleryList();
+                      else
+                        this.isGalleryLoading = false;
+                    }, 50);
+                  },
+                  fail: (data, code) => {
+                    this.statusText = `Ошибка`;
+                    this.isGalleryLoading = false;
+                  }
+                });
+              }
+              return;
+            }
+
+            // Стандартная логика Gemini
+            if (payload && payload.text) {
+              this.responseText = payload.text;
+            } else if (typeof rawData === 'string') {
+              this.responseText = rawData;
+            } else {
+              this.responseText = JSON.stringify(rawData);
+            }
+            this.statusText = 'Готово';
+            this.updateResponseHeight();
+          } catch (e) {
+            this.responseText = `[CATCH ERROR] ${e.message}`;
+            this.updateResponseHeight();
+            this.statusText = 'Ошибка';
+          } finally {
+            this.isLoading = false;
+          }
+        };
+
+        connect.diagnosis({
+          timeout: 5000,
+          success: (res) => {
+            if (res.status === 0) {
+              this.statusText = 'Подключение...';
+              this.isLoading = true;
+              setTimeout(() => {
+                this.requestLastResponse();
+              }, 200);
+            } else {
+              this.statusText = 'Ошибка';
+              let errDesc = 'Неизвестно';
+              if (res.status === 204) errDesc = 'Таймаут соединения (204)';
+              if (res.status === 1001) errDesc = 'Приложение на телефоне не найдено или не совпала подпись! (1001)';
+              if (res.status === 1000) errDesc = 'Прочие ошибки связи (1000)';
+              
+              this.responseText = `Диагностика: статус ${res.status}\n${errDesc}`;
+              this.updateResponseHeight();
+            }
+          },
+          fail: (data, code) => {
+            this.statusText = 'Ошибка';
+            this.isLoading = true;
+            this.responseText = `Сбой диагностики. Код: ${code}. Ошибка: ${data}`;
+            this.updateResponseHeight();
+          }
+        });
+
+      } catch (err) {
+        this.statusText = 'Подключение';
+        this.responseText = `Подключение.`;
+      }
+    },
+
+    requestLastResponse() {
+      if (!connect) return;
+
+      let handled = false;
+
+      connect.send({
+        data: {
+          action: 'QUESTION',
+          text: "GET_LAST_RESPONSE"
+        },
+        success: () => {
+          if (!handled) {
+            handled = true;
+            clearTimeout(timer);
+            this.statusText = 'Плюю...';
+            this.responseText = 'Плюю запрос.';
+            this.updateResponseHeight();
+          }
+        },
+        fail: (data, code) => {
+          if (!handled) {
+            handled = true;
+            clearTimeout(timer);
+            this.statusText = 'Ошибка';
+            const errStr = data && data.data ? data.data : data;
+            this.responseText = `Send error (question). Код: ${code}, Ошибка: ${errStr}`;
+            this.updateResponseHeight();
+            this.isLoading = false;
+          }
+        }
+      });
+    },
+
+    getWrappedLines(text) {
+      if (!text) return [''];
+      const maxLineWidth = 172; 
+      
+      const getCharWidth = (char) => {
+        if (char === ' ') return 5;
+        if ('.,!?-iI1'.includes(char)) return 5;
+        if ('юшщwжм'.includes(char)) return 11;
+        return 9.5;
+      };
+
+      const getStringWidth = (str) => {
+        let width = 0;
+        for (let i = 0; i < str.length; i++) {
+          width += getCharWidth(str[i]);
+        }
+        return width;
+      };
+
+      const paragraphs = text.split('\n');
+      let finalLines = [];
+
+      paragraphs.forEach(paragraph => {
+        if (paragraph === '') {
+          finalLines.push('');
+          return;
+        }
+
+        const words = paragraph.split(' ');
+        let currentLine = '';
+
+        words.forEach(word => {
+          const testLine = currentLine === '' ? word : currentLine + ' ' + word;
+          
+          if (getStringWidth(testLine) <= maxLineWidth) {
+            currentLine = testLine;
+          } else {
+            if (currentLine !== '') {
+              finalLines.push(currentLine);
+            }
+            if (getStringWidth(word) > maxLineWidth) {
+              let subWord = '';
+              for (let i = 0; i < word.length; i++) {
+                if (getStringWidth(subWord + word[i]) <= maxLineWidth) {
+                  subWord += word[i];
+                } else {
+                  finalLines.push(subWord);
+                  subWord = word[i];
+                }
+              }
+              currentLine = subWord;
+            } else {
+              currentLine = word;
+            }
+          }
+        });
+
+        if (currentLine !== '') {
+          finalLines.push(currentLine);
+        }
+      });
+
+      return finalLines;
+    },
+
+    getWordSkeleton(word) {
+      const vowels = 'аеёиоуыэюяaeiouy';
+      let skeleton = '';
+      for (let i = 0; i < word.length; i++) {
+        const char = word[i].toLowerCase();
+        if (i === 0 || !vowels.includes(char)) {
+          if (skeleton.slice(-1) !== char) {
+            skeleton += char;
+          }
+        }
+      }
+      return skeleton;
+    },
+
+    updateSuggestion(inputWord) {
+      if (!connect) return;
+
+      // Если поле ввода пустое — сбрасываем подсказки и ничего не спамим на телефон
+      if (!inputWord || inputWord.trim().length === 0) {
+        this.currentSuggestion1 = '';
+        this.currentSuggestion2 = '';
+        return;
+      }
+
+      const currentPhrase = this.inputText;
+
+      const requestPayload = `T9_SUGGEST:${currentPhrase}`;
+
+      connect.send({
+        data: {
+          action: 'QUESTION',
+          text: requestPayload
+        },
+        success: () => {},
+        fail: (data, code) => {}
+      });
+    },
+
+    updateResponseHeight() {
+      const lines = this.getWrappedLines(this.responseText);
+      
+      if (lines.length > 14) {
+        this.responseBoxHeight = 367 + (lines.length - 14) * 32;
+      } else {
+        this.responseBoxHeight = 367;
+      }
+    },
+
+    openKeyboard() {
+      if (this.isLoading) return;
+      this.isKeyboardOpen = true;
+    },
+
+    closeKeyboard() {
+      this.isKeyboardOpen = false;
+    },
+
+    closeGallery() {
+      this.isGalleryOpen = false;
+      this.isKeyboardOpen = true;
+    },
+
+    toggleSelectImage(item) {
+      if (!item) return;
+
+      if (!item.selected) {
+        const selectedCount = this.galleryItems.filter(i => i && i.selected).length;
+        if (selectedCount >= 4) {
+          return;
+        }
+      }
+      
+      // Переключаем флаг выделения
+      item.selected = !item.selected;
+      
+      // Принудительно обновляем реактивность массива в Vela JS
+      this.galleryItems = [...this.galleryItems];
+    },
+
+    handleKeyboardTouchStart(e) {
+      if (e && e.touches && e.touches[0]) {
+        this.touchStartX = e.touches[0].clientX;
+        this.touchStartY = e.touches[0].clientY;
+      }
+    },
+
+    handleKeyboardTouchEnd(e) {
+      const touchObj = (e && e.changedTouches && e.changedTouches[0]) ? e.changedTouches[0] : (e && e.touches && e.touches[0]);
+      if (!touchObj) return;
+      
+      const diffX = touchObj.clientX - this.touchStartX;
+      const diffY = touchObj.clientY - this.touchStartY;
+
+      // Свайп вниз: закрываем клавиатуру и открываем отдельную галерею
+      if (diffY < -250 && Math.abs(diffY) > Math.abs(diffX)) {
+        this.isKeyboardOpen = false; // Закрываем клавиатуру
+        this.isGalleryOpen = true;   // Открываем галерею
+        return;
+      }
+      
+      const threshold = 70;
+      if (Math.abs(diffX) > threshold) {
+        if (diffX < 0) {
+          this.layoutIndex = (this.layoutIndex + 1) % this.layouts.length;
+        } else {
+          this.layoutIndex = (this.layoutIndex - 1 + this.layouts.length) % this.layouts.length;
+        }
+      }
+    },
+
+    // Обработчик второй кнопки "Сбросить фото"
+    clearAndRequestGallery() {
+      if(this.isGalleryLoading) return;
+
+      this.isGalleryLoading = true;
+      this.clearSavedPhotos();
+      this.requestGalleryList();
+    },
+
+    requestGalleryList() {
+      if (!connect) return;
+
+      // Формируем реальный список уже скачанных имен файлов
+      const knownNamesStr = this.galleryItems
+        .filter(item => item && item.name)
+        .map(item => item.name)
+        .join(';');
+
+      // Отправляем строку вида "GET_GALLERY:photo1.jpg;photo2.jpg"
+      const requestText = `GET_GALLERY:${knownNamesStr}`;
+
+      connect.send({
+        data: {
+          action: 'QUESTION',
+          text: requestText
+        },
+        success: () => {
+          this.statusText = 'Запрос...';
+        },
+        fail: () => {
+          this.statusText = 'Ошибка связи';
+        }
+      });
+    },
+
+    addChar(char) {
+      this.inputText += char;
+
+      setTimeout(() => {
+        const words = this.inputText.split(' ');
+        this.updateSuggestion(words[words.length - 1]);
+      }, 0);
+    },
+
+    addSpace() {
+      this.inputText += ' ';
+      this.currentSuggestion1 = '';
+      this.currentSuggestion2 = '';
+    },
+
+    deleteChar() {
+      if (this.inputText.length > 0) {
+        this.inputText = this.inputText.slice(0, -1);
+
+        setTimeout(() => {
+        const words = this.inputText.split(' ');
+        this.updateSuggestion(words[words.length - 1]);
+      }, 0);
+      }
+    },
+
+    applySuggestion1() {
+      if (!this.currentSuggestion1) return;
+
+      const words = this.inputText.split(' ');
+      words[words.length - 1] = this.currentSuggestion1;
+      this.inputText = words.join(' ') + ' ';
+      this.currentSuggestion1 = '';
+      this.currentSuggestion2 = '';
+      
+    },
+    applySuggestion2() {
+      if (!this.currentSuggestion2) return;
+
+      const words = this.inputText.split(' ');
+      words[words.length - 1] = this.currentSuggestion2;
+      this.inputText = words.join(' ') + ' ';
+      this.currentSuggestion1 = '';
+      this.currentSuggestion2 = '';
+      
+    },
+
+    handleSend() {
+      let questionText = this.inputText.trim();
+      
+      if ((!questionText && !this.galleryItems.some(i => i.selected)) || this.isLoading || !connect) {
+        return;
+      }
+
+      // Собираем имена выделенных фотографий в фигурных скобках {}
+      const selectedNames = this.galleryItems
+        .filter(item => item && item.selected && item.name)
+        .map(item => `{${item.name}}`)
+        .join(' ');
+
+      // Если есть выделенные фото, вставляем их перед текстом запроса
+      if (selectedNames) {
+        questionText = (questionText ? ' ' + questionText : '') + selectedNames;
+      }
+
+      this.galleryItems.forEach(item => {
+        if (item) {
+          item.selected = false;
+        }
+      });
+      // Обновляем массив, чтобы Vela JS применила изменения в интерфейсе
+      this.galleryItems = [...this.galleryItems];
+
+      this.responseText = 'Бьюсь головой об стену...';
+      this.updateResponseHeight();
+      this.inputText = '';
+      this.isKeyboardOpen = false;
+      this.isLoading = true;
+      this.statusText = 'Обработка';
+
+      let handled = false;
+
+      const timer = setTimeout(() => {
+        if (!handled) {
+          handled = true;
+          this.statusText = 'Ошибка';
+          this.responseText = 'Таймаут отправки: телефон не принял пакет.';
+          this.updateResponseHeight();
+          this.isLoading = false;
+        }
+      }, 5000);
+
+      connect.send({
+        data: {
+          action: 'QUESTION',
+          text: questionText
+        },
+        success: () => {
+          if (!handled) {
+            handled = true;
+            clearTimeout(timer);
+            this.statusText = 'Плюю...';
+          }
+        },
+        fail: (data, code) => {
+          if (!handled) {
+            handled = true;
+            clearTimeout(timer);
+            this.statusText = 'Ошибка';
+            const errStr = data && data.data ? data.data : data;
+            this.responseText = `Send error (question). Код: ${code}, Ошибка: ${errStr}`;
+            this.updateResponseHeight();
+            this.isLoading = false;
+          }
+        }
+      });
+    }
+  }
+</script>
+
+<style>
+.container {
+  width: 192px;
+  height: 100%;
+  background-color: #000000;
+  flex-direction: column;
+  align-items: center;
+  padding-top: 2px;
+}
+
+.header {
+  width: 180px;
+  height: 16px;
+  justify-content: center;
+  align-items: center;
+}
+
+.status-title {
+  color: #79bb9c;
+  font-size: 11px;
+  font-weight: bold;
+}
+.response-scroll {
+  width: 180px;
+  height: 372px;
+  margin-bottom: 2px;
+}
+
+.response-box {
+  width: 180px;
+  padding: 10px 4px;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.response-text {
+  color: #dfdfdf;
+  font-size: 18px;
+  flex-wrap: wrap;
+  white-space: nowrap;
+}
+.actions-container {
+  width: 180px;
+  height: 95px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  margin-top: 5px;
+}
+
+.ask-btn {
+  width: 150px;
+  height: 35px;
+  background-color: #778cd3;
+  color: #ffffff;
+  font-size: 16px;
+  text-align: center;
+  border-radius: 16px;
+}
+
+.exit-btn {
+  width: 120px;
+  height: 28px;
+  background-color: #555555;
+  color: #ffffff;
+  font-size: 15px;
+  text-align: center;
+  border-radius: 14px;
+  margin-top: 10px;
+}
+
+.disabled-btn {
+  background-color: #444444;
+  color: #888888;
+}
+
+.preview-box {
+  width: 180px;
+  height: 65px;
+  background-color: #121212;
+  border-radius: 6px;
+  padding: 6px 8px;
+  margin-bottom: 4px;
+  border-width: 1px;
+  border-color: #262626;
+  justify-content: flex-end;
+  align-items: flex-end;
+}
+
+.preview-text {
+  color: #ffcb6b;
+  font-size: 22px;
+  text-align: right;
+}
+
+.keyboard-container {
+  width: 192px;
+  height: 440px; /* Было 390px, увеличили на 50px */
+  flex-direction: column;
+  background-color: #111111;
+  align-items: center;
+}
+
+.top-bar {
+  width: 186px;
+  height: 28px;
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 3px;
+}
+
+.bar-btn {
+  width: 88px;
+  height: 26px;
+  font-size: 11px;
+  text-align: center;
+  border-radius: 4px;
+  color: #ffffff;
+}
+
+.close-btn {
+  background-color: #531919;
+}
+
+.send-btn {
+  background-color: #1f4922;
+}
+
+/* Новый стиль для заблокированной кнопки */
+.send-btn-disabled {
+  background-color: #333333;
+  color: #777777;
+}
+
+.control-row {
+  width: 186px;
+  height: 38px;
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.ctrl-btn {
+  height: 34px;
+  background-color: #2a2a2a;
+  color: #ffffff;
+  font-size: 16px;
+  text-align: center;
+  border-radius: 4px;
+}
+
+.space-btn {
+  width: 116px;
+  background-color: #4a5f70;
+}
+
+.del-btn {
+  width: 66px;
+  background-color: #961f1f;
+  font-size: 18px;
+}
+
+.suggestion-row1 {
+  width: 186px;
+  height: 28px;
+  flex-direction: row;
+  justify-content: center;
+  align-items: center;
+  margin-bottom: 4px;
+}
+.suggestion-row2 {
+  width: 186px;
+  height: 28px;
+  flex-direction: row;
+  justify-content: center;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.suggestion-btn1 {
+  width: 186px;
+  height: 26px;
+  background-color: #1f1f1f; /* Еле заметный темный фон */
+  color: #ffffff;             /* Приглушенный серий текст */
+  font-size: 16px;
+  text-align: center;
+  border-radius: 4px;
+  border-width: 1px;
+  border-color: #000000;
+}
+.suggestion-btn2 {
+  width: 186px;
+  height: 26px;
+  background-color: #1f1f1f; /* Еле заметный темный фон */
+  color: #ffffff;             /* Приглушенный серий текст */
+  font-size: 16px;
+  text-align: center;
+  border-radius: 4px;
+  border-width: 1px;
+  border-color: #000000;
+}
+
+.keyboard-scroll {
+  width: 192px;
+  height: 320px; /* Видимое окно (высота экрана клавиатуры под буквы) */
+}
+
+.keys-layout {
+  width: 192px;
+  height: 780px; /* ЖЕСТКАЯ высота: она больше чем 310px, поэтому появится скролл! */
+  flex-direction: row;
+  justify-content: space-around;
+  align-items: flex-start;
+}
+
+.column {
+  flex-direction: column;
+  align-items: center;
+  height: 780px; /* Колонки тоже должны быть длинными */
+}
+.col-side {
+  width: 52px;
+  padding-top: 0px;
+}
+
+.col-center {
+  width: 72px;
+}
+
+.key-btn {
+  width: 52px;
+  height: 57px; /* Уменьшили высоту чуть-чуть, чтобы поместилось больше букв */
+  background-color: #222222;
+  color: #ffffff;
+  font-size: 26px;
+  text-align: center;
+  margin-bottom: 2px;
+  border-radius: 5px;
+}
+
+.key-btn-center {
+  width: 72px;
+  height: 57px;
+}
+
+.gallery-container {
+  position: absolute;
+  top: 0px;
+  left: 0px;
+  width: 192px;
+  height: 100%;
+  background-color: #000000;
+  flex-direction: column;
+  align-items: center;
+  padding-top: 10px;
+}
+
+.gallery-exit-btn {
+  width: 140px;
+  height: 34px;
+  background-color: #444444;
+  color: #ffffff;
+  font-size: 15px;
+  text-align: center;
+  border-radius: 17px;
+  margin-top: 25px;
+  margin-bottom: 12px;
+  flex-shrink: 0;
+}
+
+.gallery-btn-disabled {
+  background-color: #444444;
+  color: #888888;
+}
+
+.gray-square {
+  width: 192px;
+  height: 192px;
+  margin-bottom: 12px;
+  justify-content: center;
+  align-items: center;
+  background-color: #1a1a1a;
+  border-radius: 12px;
+  padding: 5px;
+  border-width: 5px;
+}
+
+/* Белая рамка по умолчанию */
+.square-unselected {
+  border-color: #a1a1a1;
+}
+
+/* Зелёная рамка при выделении */
+.square-selected {
+  border-color: #059c00;
+}
+
+.square-img {
+  width: 172px;
+  height: 172px;
+  border-radius: 8px;
+  object-fit: cover;
+}
+
+.gallery-refresh-btn {
+  width: 140px;
+  height: 32px;
+  background-color: #2b4864;
+  color: #ffffff;
+  font-size: 14px;
+  text-align: center;
+  border-radius: 16px;
+  margin-bottom: 40px;
+  flex-shrink: 0;
+}
+
+.gallery-scroll {
+  width: 192px;
+  height: 380px;
+}
+
+.squares-list {
+  width: 192px;
+  height: 2050px;
+  flex-direction: column;
+  align-items: center;
+}
+
+.square-img {
+  width: 182px;
+  height: 182px;
+  border-radius: 10px;
+  object-fit: cover;
+}
+
+.square-text {
+  color: #888888;
+  font-size: 22px;
+}
+</style>
